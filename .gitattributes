@@ -1,0 +1,14 @@
+# 수강생 환경이 Windows 다. 개행을 LF 로 고정해 프론트엔드 빌드 산출물의
+# 해시가 환경마다 흔들리지 않게 한다.
+* text=auto eol=lf
+
+*.bat       text eol=crlf
+gradlew     text eol=lf
+*.sh        text eol=lf
+
+*.jar       binary
+*.png       binary
+*.jpg       binary
+*.ico       binary
+*.woff      binary
+*.woff2     binary

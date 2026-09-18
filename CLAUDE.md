@@ -1,0 +1,58 @@
+# CLAUDE.md
+
+Spring AI 실습 프로젝트. Hacker News 의 기술 이슈를 수집해 AI 로 분석·구조화하고,
+그 결과로 의미 기반 검색과 근거 기반 Q&A 를 한다.
+
+**이 저장소는 실습용이다.** 애플리케이션은 이미 기동되고 화면도 동작하지만, AI 호출 코드가
+비어 있다. 이 빈 구현을 채우는 것이 실습이다.
+
+## 빈 구현 위치
+
+```
+ai/shell/                 LLM · Moderation 호출 9개
+search/shell/             검색 서비스
+search/plan/              벡터 검색 계획 2개 (BodyVectorPlan · SummaryVectorPlan)
+service/chat/IssueTools   모델이 호출하는 도구 7종
+service/setup/shell/      스토리 하나의 단계 처리 (StoryProcessorShell)
+service/chat/ChatServiceShell   Q&A 연결
+```
+
+**각 클래스의 Javadoc 이 구현 명세다.** 무엇을 받아 무엇을 돌려줘야 하는지,
+주의할 점이 거기 적혀 있다. 구현 전에 읽는다.
+
+## 수정 금지 대상
+
+아래는 완성본으로 제공된다. 수정하지 않는다.
+
+```
+domain/  persistence/  web/  adapter/  config/
+service/*/model/  service/*/port/
+service/topic/DefaultTopicService   service/setup/AnalysisMapper
+service/chat/ChatTurn   service/chat/SearchEvidence   service/chat/SearchRecord
+service/setup/PipelineSetupService   service/setup/StageTracker   service/setup/PipelinePolicy
+ai/*.java (shell/ 제외)   search/*.java (shell/ 제외)
+search/plan/KeywordArrayPlan   search/plan/FullTextPlan
+init/*.sql  frontend/  src/main/resources/static/
+src/test/ (단, src/test/java/hn/chatbot/playground/ 는 예외)
+```
+
+고쳐야 할 이유를 찾았다면 고치기 전에 사용자에게 알린다. 대개는 빈 구현 쪽에서
+풀 수 있는 문제다.
+
+## 확인
+
+```bash
+./gradlew test       # 계층 규칙과 계약을 검증한다
+./gradlew bootRun    # localhost:8080
+./gradlew playground --tests '*<클래스>CheckTest'  # 빈 구현 하나의 확인. .env 의 OPENAI_API_KEY 가 필요하다
+```
+
+키는 저장소 루트의 `.env` 에서 읽는다. `.env` 의 내용을 출력하거나 커밋하지 않는다.
+
+계층 규칙은 `LayeringTest` 가 강제한다. 어기면 테스트가 잡는다.
+
+`CommentModerationTest` 는 해당 구현을 채우기 전까지 실패한다. 정상이다.
+
+## 문서
+
+수강생용 안내는 `docs/` 에 있다. 환경(`01`), 전체 구조(`02`), 구현(`03`).

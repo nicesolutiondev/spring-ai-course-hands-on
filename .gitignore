@@ -1,0 +1,19 @@
+# 비밀값 — 저장소가 public 이므로 절대 커밋하지 않는다
+.env
+.env.*
+!.env.example
+
+# 빌드 산출물
+build/
+.gradle/
+
+# 프론트엔드
+frontend/node_modules/
+
+# IDE / OS
+.idea/
+*.iml
+.DS_Store
+
+# 개인 메모 — 저장소에 올리지 않는다
+CLAUDE.local.md

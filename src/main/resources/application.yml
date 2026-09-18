@@ -1,0 +1,82 @@
+spring:
+  config:
+    # 저장소 루트의 .env 를 properties 로 읽는다. OS · 셸과 무관하게 bootRun 과 테스트 모두에 적용된다.
+    # optional 이라 .env 가 없어도 기동한다. 같은 이름의 OS 환경 변수가 있으면 그쪽이 우선한다.
+    import: optional:file:.env[.properties]
+  datasource:
+    url: jdbc:postgresql://localhost:5432/hnanalyzer
+    username: hn
+    password: hn
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  ai:
+    openai:
+      # 실습 코드는 공개 저장소로 공유되므로 키를 이 파일에 넣지 않는다. 값은 .env 에서 온다.
+      # 키가 없어도 기동은 성공한다. 실제로 모델을 부르는 시점에 실패하므로,
+      # 증상이 "구현이 아직 비어 있다" 와 구분되지 않는다는 점에 주의한다.
+      api-key: ${OPENAI_API_KEY}
+      chat:
+        options:
+          model: gpt-5.6-terra
+          # 필수. gpt-5.6-terra 는 /v1/chat/completions 에서 function tools 와
+          # reasoning_effort 를 함께 쓸 수 없다. none 이 아니면 도구 호출이 400 이 된다.
+          # 호출부에서 OpenAiChatOptions 를 새로 만들면 이 값이 덮이니 주의한다.
+          reasoning-effort: none
+      embedding:
+        options:
+          model: text-embedding-3-small
+      moderation:
+        options:
+          # options 를 빠뜨리면 바인딩되지 않는다. 오류 없이 무시되고 기본 모델로 돈다.
+          model: omni-moderation-latest
+    retry:
+      # 429 를 일시적 오류로 취급해 백오프 후 재시도한다. 기본 설정은 on-client-errors
+      # 가 false 라 4xx 를 전부 영구 실패로 보고, 429 도 재시도 없이 그대로 터진다.
+      # on-http-codes 는 그 4xx 검사보다 먼저 평가되므로 429 만 골라낼 수 있다.
+      # 400 (reasoning-effort 같은 설정 오류)은 그대로 즉시 실패해야 한다.
+      on-http-codes: [429]
+      # 기본값(10회 · 2s · 배수 5 · 상한 180s)은 대기가 2 → 10 → 50 → 180초로 뛴다.
+      # 한 번 막히면 스토리 하나가 몇 분씩 멈추므로 완만하게 낮춘다.
+      max-attempts: 6
+      backoff:
+        initial-interval: 5s
+        multiplier: 3
+        max-interval: 120s
+    vectorstore:
+      pgvector:
+        # 스키마는 init/04-vector.sql 이 만든다. metadata 를 JSONB 로 두기 위해서다.
+        initialize-schema: false
+    chat:
+      memory:
+        repository:
+          jdbc:
+            # 스키마는 init/05-chat-memory.sql 이 만든다.
+            initialize-schema: never
+
+app:
+  setup:
+    # 동시에 처리하는 스토리 수. 한 건이 모델을 여러 번 부르므로 올리면 429 가 난다.
+    concurrency: 5
+  hn:
+    base-url: https://hacker-news.firebaseio.com/v0
+    # 수집 범위. 최상위 댓글만 모은다. 분석이 쓰는 것이 최상위 5개(PipelinePolicy.TOP_COMMENTS)
+    # 뿐이고, 답글은 검열 호출만 늘리고 소비되지 않아 429 의 주원인이었다.
+    # 스키마의 CHECK (depth IN (1, 2)) 는 그대로 두어 답글을 다시 켤 수 있게 한다.
+    top-level-comments: 5
+    replies-per-comment: 0
+  fetch:
+    # 기본 User-Agent 로는 거절하는 사이트가 있다.
+    user-agent: "Mozilla/5.0 (compatible; hn-chatbot/0.1; +https://github.com/vonkernel/spring-ai-course-hands-on)"
+  moderation:
+    # 기본은 꺼짐. Moderation 의 분당 요청 한도가 낮은데 댓글 하나마다 호출하는
+    # 구조라, 셋업을 병렬로 돌리면 여기서 가장 먼저 429 가 난다.
+    # true 로 두면 CommentModeratorShell 이 실제로 모델을 부른다.
+    enabled: false
+    # harassment 계열은 뺀다. 기술 커뮤니티의 제품·기업 비판이 대량으로 걸린다.
+    # illicit 계열은 두지 않는다. Spring AI 1.1.8 이 이 카테고리의 점수를 제공하지 않는다.
+    categories: [sexual, sexual/minors, hate, hate/threatening,
+                 violence, violence/graphic,
+                 self-harm, self-harm/intent, self-harm/instructions]
+    threshold: 0.85

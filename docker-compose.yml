@@ -1,0 +1,37 @@
+# 이미지 버전을 고정한다. pg18 같은 움직이는 태그를 쓰면 교육 당일 이미지가 바뀐다.
+services:
+  db:
+    image: pgvector/pgvector:0.8.6-pg18
+    environment:
+      POSTGRES_DB: hnanalyzer
+      POSTGRES_USER: hn
+      POSTGRES_PASSWORD: hn
+    ports:
+      - "5432:5432"
+    volumes:
+      # pg18+ 는 데이터 디렉터리가 메이저 버전별 하위 디렉터리로 바뀌었다.
+      # /var/lib/postgresql/data 에 물리면 컨테이너가 기동을 거부한다.
+      - pgdata:/var/lib/postgresql
+      - ./init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hn -d hnanalyzer"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # 컨테이너로 두면 수강생 노트북에 설치할 것이 Docker Desktop 하나뿐이다.
+  # SERVER_MODE=False 는 로그인 없이 바로 들어가게 한다.
+  pgadmin:
+    image: dpage/pgadmin4
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@local.dev
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "5050:80"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
