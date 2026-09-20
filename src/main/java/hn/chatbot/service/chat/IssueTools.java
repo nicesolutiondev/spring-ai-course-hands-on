@@ -25,7 +25,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * 모델이 호출하는 도구 7종. 수강생이 채운다.
+ * 모델이 호출하는 도구 7종.
  *
  * 도구 등록(@Tool · @ToolParam)과 인자 검증이 구현 대상이다. 설명 문구가 곧 모델의
  * 선택 기준이므로 언제 쓰고 언제 쓰지 않는지를 적는다.
@@ -232,8 +232,10 @@ public class IssueTools {
      *
      * TopicService.summarize 에 위임한다. 그 안에서 TopicSummarizer 가 LLM 을 호출한다.
      */
-    public String summarizeTopic(String techField) {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+    @Tool(description = "특정 기술 분야 전반의 논의 흐름을 요약한다. 'AI 쪽 논의 흐름 정리해줘' 처럼 분야 전체를 물을 때 쓴다. "
+            + "개별 이슈를 찾을 때는 쓰지 않는다(그때는 searchIssues 를 쓴다).")
+    public String summarizeTopic(@ToolParam(description = "요약할 기술 분야. " + TECH_FIELDS) String techField) {
+        return topicService.summarize(blankToNull(techField));
     }
 
     private static StorySort parseSort(String sortBy) {
