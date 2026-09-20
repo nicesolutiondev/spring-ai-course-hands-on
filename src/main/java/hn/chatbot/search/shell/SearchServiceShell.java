@@ -1,12 +1,20 @@
 package hn.chatbot.search.shell;
 
+import hn.chatbot.search.Candidate;
+import hn.chatbot.search.PlanHit;
+import hn.chatbot.search.PlanRun;
+import hn.chatbot.search.PlanSummary;
 import hn.chatbot.search.SearchPlan;
 import hn.chatbot.search.SearchResult;
 import hn.chatbot.search.SearchService;
 import hn.chatbot.search.port.StoryIndexQuery;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 4개 계획을 전부 수행하고 storyId 기준으로 중복을 제거한다(최대 20건).
@@ -18,11 +26,15 @@ import java.util.List;
  *
  * 계획이 돌려주는 것은 storyId 와 점수뿐이다. 중복을 제거한 뒤
  * StoryIndexQuery.hydrate 로 제목과 요약을 채워 후보를 만들고, 후보마다 찾아낸 계획 번호를 기록한다.
- *
- * 수강생이 채운다. 계획 4개와 색인 조회가 주입돼 있다.
  */
 @Service
 public class SearchServiceShell implements SearchService {
+
+    /** 계획마다 받는 상위 건수. */
+    private static final int HITS_PER_PLAN = 5;
+
+    /** 중복 제거 후 남기는 후보의 최대 건수. */
+    private static final int MAX_MERGED = 20;
 
     private final List<SearchPlan> plans;
     private final StoryIndexQuery index;
@@ -34,6 +46,34 @@ public class SearchServiceShell implements SearchService {
 
     @Override
     public SearchResult search(String query, String techField, String category) {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+        List<SearchPlan> ordered = plans.stream()
+                .sorted(Comparator.comparingInt(SearchPlan::number))
+                .toList();
+
+        List<PlanSummary> summaries = new ArrayList<>();
+        Map<Long, List<Integer>> matchedPlansByStory = new LinkedHashMap<>();
+
+        for (SearchPlan plan : ordered) {
+            PlanRun run = plan.execute(query, techField, category, HITS_PER_PLAN);
+            summaries.add(new PlanSummary(plan.number(), plan.name(), run.hits().size(), run.condition()));
+
+            for (PlanHit hit : run.hits()) {
+                List<Integer> matchedPlans = matchedPlansByStory.get(hit.storyId());
+                if (matchedPlans != null) {
+                    matchedPlans.add(plan.number());
+                }
+                else if (matchedPlansByStory.size() < MAX_MERGED) {
+                    matchedPlansByStory.put(hit.storyId(), new ArrayList<>(List.of(plan.number())));
+                }
+            }
+        }
+
+        List<Long> storyIds = List.copyOf(matchedPlansByStory.keySet());
+        List<Candidate> candidates = index.hydrate(storyIds).stream()
+                .map(candidate -> new Candidate(candidate.storyId(), candidate.title(), candidate.summary(),
+                        matchedPlansByStory.get(candidate.storyId())))
+                .toList();
+
+        return new SearchResult(summaries, storyIds.size(), candidates);
     }
 }
