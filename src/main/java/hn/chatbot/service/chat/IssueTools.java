@@ -1,18 +1,28 @@
 package hn.chatbot.service.chat;
 
+import hn.chatbot.ai.AnalysisTarget;
 import hn.chatbot.ai.RelevanceJudge;
+import hn.chatbot.ai.RelevantStory;
+import hn.chatbot.search.Candidate;
+import hn.chatbot.search.SearchResult;
 import hn.chatbot.search.SearchService;
 import hn.chatbot.service.chat.port.ChatQuery;
 import hn.chatbot.service.topic.TopicService;
 import hn.chatbot.service.topic.model.StorySummary;
 import hn.chatbot.service.topic.model.TopicDistribution;
+import hn.chatbot.service.topic.model.TopicStories;
+import hn.chatbot.service.topic.port.TopicQuery.StorySort;
 import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * 모델이 호출하는 도구 7종. 수강생이 채운다.
@@ -55,6 +65,9 @@ public class IssueTools {
             + "OPINION_ESSAY, TECHNICAL_DEEP_DIVE, RESEARCH_PAPER, SHOW_HN_PROJECT, ASK_TELL_HN, "
             + "PRODUCT_MARKETING. 이 목록에 없는 타입을 찾을 때는 listTopics 로 실제 값을 먼저 확인한다";
 
+    private static final int EVIDENCE_MAX = 5;
+    private static final int LIST_DEFAULT_LIMIT = 20;
+    private static final int LIST_MAX_LIMIT = 50;
     private static final int COMMENTS_DEFAULT_LIMIT = 5;
     private static final int COMMENTS_MAX_LIMIT = 10;
 
@@ -89,8 +102,45 @@ public class IssueTools {
      * 5 ctx 의 conversationId 로 SearchRecord.of 문구를 AssistantMessage 로 기억에 기록한다
      * 6 SearchEvidence 를 돌려준다. 모델이 이것으로 답을 쓴다
      */
-    public SearchEvidence searchIssues(String query, String techField, String category, ToolContext ctx) {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+    @Tool(description = "질의와 의미가 관련된 기술 이슈를 찾아 근거를 돌려준다. "
+            + "'코딩 에이전트 한계가 뭐야' 처럼 특정 내용을 묻는 질문에 쓴다. "
+            + "개수를 세거나 목록을 나열할 때는 쓰지 않는다(그때는 countStories · listStories 를 쓴다).")
+    public SearchEvidence searchIssues(
+            @ToolParam(description = "검색할 질문. 사용자의 질문을 그대로 또는 검색에 알맞게 다듬어 넣는다") String query,
+            @ToolParam(required = false, description = "찾을 기술 분야. 비우면 모든 분야에서 찾는다. " + TECH_FIELDS) String techField,
+            @ToolParam(required = false, description = "찾을 원문 타입/카테고리. 예: 공식 발표만 찾을 때. 비우면 모든 카테고리에서 찾는다. " + CATEGORIES) String category,
+            ToolContext ctx) {
+        SearchResult result = searchService.search(query, techField, category);
+
+        List<Long> storyIds = result.candidates().stream().map(Candidate::storyId).toList();
+        Map<Long, String> excerpts = storyIds.isEmpty() ? Map.of() : chatQuery.bodyExcerpts(storyIds);
+
+        List<RelevantStory> judged;
+        // Javadoc 의 분기는 후보 기준이다. 후보가 있으면 원문이 비어도 판단을 거친다.
+        if (result.candidates().isEmpty()) {
+            judged = List.of();
+        } else {
+            Map<Long, Candidate> candidateById = result.candidates().stream()
+                    .collect(Collectors.toMap(Candidate::storyId, Function.identity()));
+            List<AnalysisTarget> targets = excerpts.entrySet().stream()
+                    .map(e -> {
+                        Candidate candidate = candidateById.get(e.getKey());
+                        return AnalysisTarget.forJudge(candidate.storyId(), candidate.title(),
+                                candidate.summary(), e.getValue());
+                    })
+                    .toList();
+            judged = relevanceJudge.selectRelevant(query, targets, EVIDENCE_MAX);
+        }
+
+        List<StoryDetail> details = chatQuery.storyDetails(judged.stream().map(RelevantStory::storyId).toList());
+        SearchEvidence evidence = SearchEvidence.assemble(result, judged, details, excerpts);
+
+        ChatTurn.from(ctx).publish(evidence);
+
+        String conversationId = (String) ctx.getContext().get(ChatMemory.CONVERSATION_ID);
+        chatMemory.add(conversationId, new AssistantMessage(SearchRecord.of(query, techField, category, evidence)));
+
+        return evidence;
     }
 
     /**
@@ -119,8 +169,24 @@ public class IssueTools {
      *
      * 결과를 SearchRecord.ofStories 문구로 대화 기억에 기록한다.
      */
-    public List<StorySummary> listStories(String techField, String sortBy, Integer limit, ToolContext ctx) {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+    @Tool(description = "특정 기술 분야의 이슈 목록을 점수순 또는 최신순으로 나열한다. "
+            + "'AI 쪽 이슈 점수순으로 보여줘' 처럼 목록을 물을 때 쓴다.")
+    public List<StorySummary> listStories(
+            @ToolParam(required = false, description = "나열할 기술 분야. 비우면 모든 분야를 나열한다. " + TECH_FIELDS) String techField,
+            @ToolParam(required = false, description = "정렬 기준. SCORE(점수순) 또는 RECENT(최신순). "
+                    + "비우거나 알 수 없는 값이면 SCORE 를 쓴다") String sortBy,
+            @ToolParam(required = false, description = "최대 개수. 비우면 기본값을 쓰고, 상한을 넘으면 상한으로 자른다") Integer limit,
+            ToolContext ctx) {
+        StorySort sort = parseSort(sortBy);
+        int effectiveLimit = resolveLimit(limit, LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT);
+
+        TopicStories result = topicService.stories(blankToNull(techField), sort, effectiveLimit);
+        List<StorySummary> stories = result.stories();
+
+        String conversationId = (String) ctx.getContext().get(ChatMemory.CONVERSATION_ID);
+        chatMemory.add(conversationId, new AssistantMessage(SearchRecord.ofStories(techField, sort.name(), stories)));
+
+        return stories;
     }
 
     /**
@@ -168,6 +234,17 @@ public class IssueTools {
      */
     public String summarizeTopic(String techField) {
         throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+    }
+
+    private static StorySort parseSort(String sortBy) {
+        if (sortBy == null || sortBy.isBlank()) {
+            return StorySort.SCORE;
+        }
+        try {
+            return StorySort.valueOf(sortBy.strip().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return StorySort.SCORE;
+        }
     }
 
     private static int resolveLimit(Integer limit, int defaultValue, int max) {
