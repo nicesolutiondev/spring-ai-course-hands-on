@@ -8,6 +8,8 @@ import hn.chatbot.service.topic.model.StorySummary;
 import hn.chatbot.service.topic.model.TopicDistribution;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.model.ToolContext;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -42,6 +44,19 @@ import java.util.List;
  */
 @Component
 public class IssueTools {
+
+    /** 모델이 techField 에 넣을 수 있는 값. 폴백으로 새 값이 생기므로 listTopics 안내를 함께 둔다. */
+    static final String TECH_FIELDS = "허용값: AI_LLM, SECURITY_PRIVACY, OPEN_SOURCE, "
+            + "INFRASTRUCTURE_ENTERPRISE, PLATFORM_POLICY, DEV_CULTURE_PRACTICE, HARDWARE, "
+            + "MOBILITY, NON_TECHNICAL. 이 목록에 없는 분야를 찾을 때는 listTopics 로 실제 값을 먼저 확인한다";
+
+    /** 모델이 category 에 넣을 수 있는 값. */
+    static final String CATEGORIES = "허용값: OFFICIAL_ANNOUNCEMENT, RELEASE_NOTES, NEWS_REPORT, "
+            + "OPINION_ESSAY, TECHNICAL_DEEP_DIVE, RESEARCH_PAPER, SHOW_HN_PROJECT, ASK_TELL_HN, "
+            + "PRODUCT_MARKETING. 이 목록에 없는 타입을 찾을 때는 listTopics 로 실제 값을 먼저 확인한다";
+
+    private static final int COMMENTS_DEFAULT_LIMIT = 5;
+    private static final int COMMENTS_MAX_LIMIT = 10;
 
     private final SearchService searchService;
     private final RelevanceJudge relevanceJudge;
@@ -85,8 +100,12 @@ public class IssueTools {
      *
      * 두 인자 모두 선택이다. TopicService.count 에 그대로 넘기면 비운 축은 거르지 않는다.
      */
-    public int countStories(String techField, String category) {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+    @Tool(description = "적재된 기술 이슈의 건수를 센다. '이슈가 몇 건이야' 처럼 집계를 물을 때 쓴다. "
+            + "개별 이슈를 찾을 때는 쓰지 않는다.")
+    public int countStories(
+            @ToolParam(required = false, description = "건수를 셀 기술 분야. 비우면 모든 분야를 센다. " + TECH_FIELDS) String techField,
+            @ToolParam(required = false, description = "건수를 셀 원문 타입/카테고리. 비우면 모든 카테고리를 센다. " + CATEGORIES) String category) {
+        return topicService.count(techField, category);
     }
 
     /**
@@ -109,8 +128,10 @@ public class IssueTools {
      *
      * storyId 를 이미 받아 호출되므로 대화 기억에 따로 남기지 않아도 된다.
      */
-    public StoryDetail getStoryDetail(long storyId) {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+    @Tool(description = "특정 스토리 하나의 요약 · 커뮤니티 반응 · 실무 시사점을 가져온다. storyId 를 이미 알고 있을 때 쓴다.")
+    public StoryDetail getStoryDetail(@ToolParam(description = "조회할 스토리 id") long storyId) {
+        return chatQuery.storyDetail(storyId)
+                .orElseThrow(() -> new IllegalArgumentException("story not found: " + storyId));
     }
 
     /**
@@ -118,8 +139,12 @@ public class IssueTools {
      *
      * 돌려주는 text 는 검열을 거쳐 마스킹된 값이다.
      */
-    public List<CommentView> getComments(long storyId, Integer limit) {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+    @Tool(description = "특정 스토리의 실제 댓글을 가져온다. '방금 그 이슈 댓글 보여줘' 처럼 댓글 원문을 물을 때 쓴다.")
+    public List<CommentView> getComments(
+            @ToolParam(description = "댓글을 가져올 스토리 id") long storyId,
+            @ToolParam(required = false, description = "최대 개수. 비우면 기본값을 쓰고, 상한을 넘으면 상한으로 자른다") Integer limit) {
+        int effectiveLimit = resolveLimit(limit, COMMENTS_DEFAULT_LIMIT, COMMENTS_MAX_LIMIT);
+        return chatQuery.comments(storyId, effectiveLimit);
     }
 
     /**
@@ -127,8 +152,10 @@ public class IssueTools {
      *
      * TopicService 를 그대로 호출한다. 주제 탐색 탭과 모델이 같은 데이터를 본다.
      */
+    @Tool(description = "수집된 이슈가 어떤 기술 분야와 원문 타입으로 나뉘는지 분포를 가져온다. "
+            + "'어떤 기술 분야들이 있어' 처럼 전체 구성을 물을 때 쓴다.")
     public TopicDistribution listTopics() {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+        return topicService.distribution();
     }
 
     /**
@@ -141,5 +168,18 @@ public class IssueTools {
      */
     public String summarizeTopic(String techField) {
         throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+    }
+
+    private static int resolveLimit(Integer limit, int defaultValue, int max) {
+        // 비거나 말이 안 되는 값은 기본값으로 되돌린다. 큰 값만 상한으로 자른다.
+        if (limit == null || limit <= 0) {
+            return defaultValue;
+        }
+        return Math.min(limit, max);
+    }
+
+    /** 모델은 없는 값을 빈 문자열로 채우기도 한다. 그대로 넘기면 「이름이 빈 분야」를 찾게 된다. */
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.strip();
     }
 }
