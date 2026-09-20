@@ -1,10 +1,18 @@
 package hn.chatbot.search.plan;
 
+import hn.chatbot.search.PlanConditions;
+import hn.chatbot.search.PlanHit;
 import hn.chatbot.search.PlanRun;
 import hn.chatbot.search.SearchPlan;
+import org.springframework.ai.document.Document;
+import org.springframework.ai.vectorstore.SearchRequest;
+import org.springframework.ai.vectorstore.filter.Filter;
+import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.ai.vectorstore.pgvector.PgVectorStore;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
+
+import java.util.List;
 
 /**
  * 검색 계획 4 — 요약 벡터 검색.
@@ -15,8 +23,6 @@ import org.springframework.stereotype.Component;
  * 둘 다 모델이 채우는 값이라 빈 문자열로 올 수 있다.
  *
  * 결과와 함께 실행한 조건을 돌려준다. 조건 문자열은 PlanConditions.vector 로 만든다.
- *
- * 수강생이 채운다.
  */
 @Component
 public class SummaryVectorPlan implements SearchPlan {
@@ -39,6 +45,38 @@ public class SummaryVectorPlan implements SearchPlan {
 
     @Override
     public PlanRun execute(String query, String techField, String category, int limit) {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+        String field = PlanConditions.blankToNull(techField);
+        String type = PlanConditions.blankToNull(category);
+        String condition = PlanConditions.vector(query, field, type, limit);
+        if (query == null || query.isBlank()) {
+            return new PlanRun(List.of(), condition);
+        }
+
+        List<Document> documents = vectorStore.similaritySearch(SearchRequest.builder()
+                .query(query)
+                .topK(limit)
+                .similarityThreshold(0.0)                    // 하한을 두지 않고 재순위에 맡긴다
+                .filterExpression(filter(field, type))
+                .build());
+
+        List<PlanHit> hits = documents.stream()
+                .map(document -> new PlanHit(
+                        ((Number) document.getMetadata().get("storyId")).longValue(),
+                        1.0 - document.getScore()))
+                .toList();
+
+        return new PlanRun(hits, condition);
+    }
+
+    private static Filter.Expression filter(String techField, String category) {
+        FilterExpressionBuilder b = new FilterExpressionBuilder();
+        FilterExpressionBuilder.Op expression = b.eq("suitable", true);
+        if (techField != null) {
+            expression = b.and(expression, b.eq("techField", techField));
+        }
+        if (category != null) {
+            expression = b.and(expression, b.eq("category", category));
+        }
+        return expression.build();
     }
 }
