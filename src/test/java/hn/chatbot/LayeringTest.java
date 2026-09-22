@@ -53,7 +53,7 @@ class LayeringTest {
     @DisplayName("persistence/repository 는 persistence 밖으로 새지 않는다")
     void springDataStaysInsidePersistence() throws IOException {
         List<String> offenders = javaFiles(BASE)
-                .filter(p -> !p.toString().contains("/persistence/"))
+                .filter(p -> !p.toString().replace('\\', '/').contains("/persistence/"))
                 .filter(p -> imports(p).stream()
                         .anyMatch(i -> i.contains("hn.chatbot.persistence.repository")))
                 .map(Path::toString)

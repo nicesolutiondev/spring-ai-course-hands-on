@@ -1,6 +1,11 @@
 package hn.chatbot.search.plan;
 
 import hn.chatbot.search.PlanRun;
+import hn.chatbot.search.PlanConditions;
+import hn.chatbot.search.PlanHit;
+import org.springframework.ai.document.Document;
+import org.springframework.ai.vectorstore.SearchRequest;
+import java.util.*;
 import hn.chatbot.search.SearchPlan;
 import org.springframework.ai.vectorstore.pgvector.PgVectorStore;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -39,6 +44,21 @@ public class BodyVectorPlan implements SearchPlan {
 
     @Override
     public PlanRun execute(String query, String techField, String category, int limit) {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+        String field = PlanConditions.blankToNull(techField);
+        String type = PlanConditions.blankToNull(category);
+        String condition = PlanConditions.vector(query, field, type, limit);
+        if (query == null || query.isBlank() || limit <= 0) return new PlanRun(List.of(), condition);
+        Map<Long, Double> best = new LinkedHashMap<>();
+        for (Document document : vectorStore.similaritySearch(SearchRequest.builder().query(query).topK(limit).build())) {
+            Map<String, Object> metadata = document.getMetadata();
+            if (!Boolean.TRUE.equals(metadata.get("suitable"))) continue;
+            if (field != null && !field.equals(String.valueOf(metadata.get("techField")))) continue;
+            if (type != null && !type.equals(String.valueOf(metadata.get("category")))) continue;
+            Object id = metadata.get("storyId");
+            if (id == null) continue;
+            long storyId = Long.parseLong(String.valueOf(id));
+            best.merge(storyId, document.getScore() == null ? 0d : document.getScore(), Math::max);
+        }
+        return new PlanRun(best.entrySet().stream().map(e -> new PlanHit(e.getKey(), e.getValue())).toList(), condition);
     }
 }

@@ -5,6 +5,7 @@ import hn.chatbot.ai.RelevanceJudge;
 import hn.chatbot.ai.RelevantStory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Component;
+import org.springframework.core.ParameterizedTypeReference;
 
 import java.util.List;
 
@@ -17,6 +18,12 @@ import java.util.List;
 @Component
 public class RelevanceJudgeShell implements RelevanceJudge {
 
+    private static final int MAX_TARGETS = 20;
+    private static final int MAX_QUESTION_CHARS = 2_000;
+    private static final int MAX_TITLE_CHARS = 500;
+    private static final int MAX_SUMMARY_CHARS = 2_000;
+    private static final int MAX_EXCERPT_CHARS = 2_000;
+
     private final ChatClient chatClient;
 
     public RelevanceJudgeShell(ChatClient.Builder builder) {
@@ -25,6 +32,22 @@ public class RelevanceJudgeShell implements RelevanceJudge {
 
     @Override
     public List<RelevantStory> selectRelevant(String question, List<AnalysisTarget> targets, int max) {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+        if (question == null || question.isBlank() || targets == null || targets.isEmpty() || max <= 0) return List.of();
+        StringBuilder user = new StringBuilder("Question: ").append(limit(question, MAX_QUESTION_CHARS)).append("\n\nCandidates:\n");
+        for (AnalysisTarget target : targets.stream().limit(MAX_TARGETS).toList()) {
+            user.append("ID ").append(target.storyId()).append("\nTitle: ")
+                    .append(limit(target.title(), MAX_TITLE_CHARS)).append("\nSummary: ")
+                    .append(limit(target.summary(), MAX_SUMMARY_CHARS)).append("\nExcerpt: ")
+                    .append(limit(target.excerpt(), MAX_EXCERPT_CHARS)).append("\n---\n");
+        }
+        List<RelevantStory> selected = chatClient.prompt().system("Select genuinely relevant candidates. Return a JSON array with storyId and passage. Use only candidate IDs, at most the requested number. passage must be an exact contiguous quote from the excerpt, at most 300 characters, or null.").user(user.toString()).call().entity(new ParameterizedTypeReference<List<RelevantStory>>() {});
+        if (selected == null) return List.of();
+        java.util.Set<Long> ids = targets.stream().map(AnalysisTarget::storyId).collect(java.util.stream.Collectors.toSet());
+        return selected.stream().filter(item -> item != null && ids.contains(item.storyId())).limit(max).toList();
+    }
+
+    private static String limit(String value, int max) {
+        if (value == null || value.length() <= max) return value;
+        return value.substring(0, max);
     }
 }

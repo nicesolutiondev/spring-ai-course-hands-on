@@ -34,6 +34,21 @@ public class SearchServiceShell implements SearchService {
 
     @Override
     public SearchResult search(String query, String techField, String category) {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+        List<SearchPlan> ordered = new java.util.ArrayList<>(plans);
+        ordered.sort(java.util.Comparator.comparingInt(SearchPlan::number));
+        List<hn.chatbot.search.PlanSummary> summaries = new java.util.ArrayList<>();
+        java.util.Map<Long, java.util.LinkedHashSet<Integer>> matched = new java.util.LinkedHashMap<>();
+        for (SearchPlan plan : ordered) {
+            hn.chatbot.search.PlanRun run = plan.execute(query, techField, category, 5);
+            summaries.add(new hn.chatbot.search.PlanSummary(plan.number(), plan.name(), run.hits().size(), run.condition()));
+            for (hn.chatbot.search.PlanHit hit : run.hits()) matched.computeIfAbsent(hit.storyId(), k -> new java.util.LinkedHashSet<>()).add(plan.number());
+        }
+        List<Long> ids = new java.util.ArrayList<>(matched.keySet());
+        if (ids.size() > 20) ids = new java.util.ArrayList<>(ids.subList(0, 20));
+        java.util.Map<Long, hn.chatbot.search.Candidate> byId = new java.util.HashMap<>();
+        for (hn.chatbot.search.Candidate c : index.hydrate(ids)) byId.put(c.storyId(), c);
+        List<hn.chatbot.search.Candidate> candidates = new java.util.ArrayList<>();
+        for (Long id : ids) { hn.chatbot.search.Candidate c = byId.get(id); if (c != null) candidates.add(new hn.chatbot.search.Candidate(c.storyId(), c.title(), c.summary(), new java.util.ArrayList<>(matched.get(id)))); }
+        return new SearchResult(summaries, ids.size(), candidates);
     }
 }
