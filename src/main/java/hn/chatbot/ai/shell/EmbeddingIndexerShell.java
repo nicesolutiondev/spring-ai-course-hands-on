@@ -2,11 +2,16 @@ package hn.chatbot.ai.shell;
 
 import hn.chatbot.ai.EmbeddingIndexer;
 import hn.chatbot.ai.IssueAnalysis;
+import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.pgvector.PgVectorStore;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 /**
  * 8단계 — 임베딩해 두 벡터 스토어에 적재한다.
@@ -34,11 +39,35 @@ public class EmbeddingIndexerShell implements EmbeddingIndexer {
 
     @Override
     public void indexSummary(long storyId, IssueAnalysis analysis) {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+        summaryVectorStore.add(List.of(new Document(
+                documentId("summary", storyId), analysis.summary(), metadata(storyId, analysis))));
     }
 
     @Override
     public void indexBody(long storyId, IssueAnalysis analysis, List<String> chunks) {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+        List<Document> documents = new java.util.ArrayList<>();
+        for (int sequence = 0; sequence < chunks.size(); sequence++) {
+            Map<String, Object> metadata = metadata(storyId, analysis);
+            metadata.put("chunkSeq", sequence);
+            documents.add(new Document(documentId("body:" + sequence, storyId), chunks.get(sequence), metadata));
+        }
+        bodyVectorStore.add(documents);
+    }
+
+    private Map<String, Object> metadata(long storyId, IssueAnalysis analysis) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("storyId", storyId);
+        metadata.put("suitable", analysis.suitable());
+        metadata.put("techField", nullToEmpty(analysis.techField()));
+        metadata.put("category", nullToEmpty(analysis.category()));
+        return metadata;
+    }
+
+    private String documentId(String type, long storyId) {
+        return UUID.nameUUIDFromBytes((type + ":" + storyId).getBytes(StandardCharsets.UTF_8)).toString();
+    }
+
+    private String nullToEmpty(String value) {
+        return value == null ? "" : value;
     }
 }
