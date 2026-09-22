@@ -22,6 +22,27 @@ public class ArticleBodyExtractorShell implements ArticleBodyExtractor {
 
     @Override
     public Optional<String> extract(String title, String cleanedText) {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+        String body = chatClient.prompt()
+                .system("""
+                        Extract only the article body from the supplied cleaned web-page text.
+                        Use the title as an anchor to distinguish the article from surrounding page text.
+                        Exclude navigation, advertisements, related articles, subscription prompts,
+                        comments, legal notices, and footer text.
+                        Return the body verbatim without commentary, labels, or Markdown fences.
+                        If there is no article body, return an empty response.
+                        """)
+                .user("""
+                        Title:
+                        %s
+
+                        Cleaned web-page text:
+                        %s
+                        """.formatted(title, cleanedText))
+                .call()
+                .content();
+
+        return Optional.ofNullable(body)
+                .map(String::trim)
+                .filter(text -> !text.isEmpty());
     }
 }

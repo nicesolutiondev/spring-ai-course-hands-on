@@ -5,6 +5,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
@@ -82,6 +83,29 @@ class PromptLabTest {
             assertThat(result).isNotBlank();
         }
     }
+
+    @Test
+    @DisplayName("샘플 이슈로 분석 프롬프트를 실험한다2")
+    void 프롬프트를_실험한다2() throws Exception {
+        String result = builder.build().prompt()
+                // ── 여기부터 고친다 ──────────────────────────────────
+                .system("""
+                        너는 내가 인사를 하면 인사를 친절하게 받아줘야해.
+                        """)
+                .user("""
+                        안녕?
+                        """)
+                // ── 여기까지 ────────────────────────────────────────
+                .messages(new AssistantMessage("안녕하세요! 만나서 반가워요 \uD83D\uDE0A 무엇을 도와드릴까요?"))
+                .user("오늘 서울 날씨를 알려줘.")
+                .call()
+                .content();
+
+        System.out.println(result);
+
+        assertThat(result).isNotBlank();
+    }
+
 
     private List<SampleIssue> loadSamples() throws Exception {
         try (InputStream in = getClass().getResourceAsStream("/playground/sample-issues.json")) {
