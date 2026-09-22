@@ -23,6 +23,21 @@ public class TopicSummarizerShell implements TopicSummarizer {
 
     @Override
     public String summarize(String techField, List<AnalysisTarget> targets) {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+        if (targets == null || targets.isEmpty()) return "No stories are available for this topic.";
+        StringBuilder user = new StringBuilder("Technical field: ").append(techField).append("\n\nStories:\n");
+        for (AnalysisTarget target : targets.stream().limit(20).toList()) {
+            user.append("Title: ").append(target.title()).append("\nSummary: ").append(target.summary())
+                    .append("\nCommunity reaction: ").append(target.communityReaction()).append("\n---\n");
+        }
+        return chatClient.prompt()
+                .system("""
+                        Summarize the common trends across these Hacker News stories in the requested technical field.
+                        Explain recurring themes, changes over time, and disagreements or community reactions.
+                        Do not invent facts or discuss stories that are not provided. Write a concise, coherent
+                        answer in the same language as the user-facing request.
+                        """)
+                .user(user.toString())
+                .call()
+                .content();
     }
 }

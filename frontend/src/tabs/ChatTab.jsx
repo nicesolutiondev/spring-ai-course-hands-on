@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { askChat } from '../api.js'
 
 const PLAN_NAMES = ['키워드 완전 일치', '전문 검색', '원문 청크 벡터', '요약 벡터']
@@ -19,7 +21,8 @@ export default function ChatTab() {
   // 후속 질문("방금 그 이슈")이 무엇을 가리키는지 눈으로 따라갈 수 있다.
   const [turns, setTurns] = useState([])
   const [busy, setBusy] = useState(false)
-  const endRef = useRef(null)
+  const messagesRef = useRef(null)
+  const followBottomRef = useRef(true)
 
   const last = turns[turns.length - 1]
 
@@ -31,7 +34,19 @@ export default function ChatTab() {
     setQuestion('')
   }
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [turns])
+  useEffect(() => {
+    const messages = messagesRef.current
+    if (messages && followBottomRef.current) {
+      messages.scrollTo({ top: messages.scrollHeight, behavior: 'smooth' })
+    }
+  }, [turns])
+
+  function updateFollowBottom() {
+    const messages = messagesRef.current
+    if (!messages) return
+    const distanceFromBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight
+    followBottomRef.current = distanceFromBottom < 48
+  }
 
   async function submit(e) {
     e.preventDefault()
@@ -39,6 +54,7 @@ export default function ChatTab() {
     if (!q || busy) return
 
     const at = turns.length
+    followBottomRef.current = true
     setQuestion(''); setBusy(true)
     setTurns((prev) => [...prev, { q, plans: null, evidence: null, answer: '' }])
 
@@ -90,7 +106,7 @@ export default function ChatTab() {
       </aside>
 
       <section className="thread">
-        <div className="messages">
+        <div className="messages" ref={messagesRef} onScroll={updateFollowBottom}>
           {turns.length === 0 && (
             <div className="empty">
               <h3>수집된 기술 이슈에 대해 무엇이든 물어보세요</h3>
@@ -107,7 +123,18 @@ export default function ChatTab() {
                   {t.evidence ? `근거 ${t.evidence.selected}건을 찾았습니다`
                     : busy && i === turns.length - 1 ? '생각하는 중…' : '답변'}
                 </div>
-                <div style={{ whiteSpace: 'pre-wrap' }}>{t.answer}</div>
+                <div className="answer-markdown">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      a: ({ href, children }) => (
+                        <a href={href} target="_blank" rel="noreferrer">{children}</a>
+                      ),
+                    }}
+                  >
+                    {t.answer}
+                  </ReactMarkdown>
+                </div>
 
                 {t.evidence?.evidence?.length > 0 && (
                   <>
@@ -118,7 +145,6 @@ export default function ChatTab() {
               </div>
             </div>
           ))}
-          <div ref={endRef} />
         </div>
 
         {/* 입력창은 항상 살아 있다. 데이터가 없으면 서버가 안내 문구를 스트림으로 흘린다. */}

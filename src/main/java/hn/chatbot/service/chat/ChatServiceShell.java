@@ -1,10 +1,14 @@
 package hn.chatbot.service.chat;
 
 import hn.chatbot.service.chat.model.ChatEvent;
+import hn.chatbot.ai.AnswerGenerator;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
-import java.time.Duration;
+import java.util.Map;
 
 /**
  * 빈 구현이다.
@@ -19,16 +23,23 @@ import java.time.Duration;
 @Service
 public class ChatServiceShell implements ChatService {
 
-    private static final String MESSAGE =
-            "아직 구현되지 않았습니다. ChatService 를 채우면 이 자리에 답변이 흐릅니다.";
+    private final ChatClient chatClient;
+    private final AnswerGenerator answerGenerator;
+    private final IssueTools issueTools;
+    private final ChatMemory chatMemory;
+
+    public ChatServiceShell(ChatClient.Builder builder, AnswerGenerator answerGenerator, IssueTools issueTools, ChatMemory chatMemory) {
+        this.chatClient = builder.build(); this.answerGenerator = answerGenerator; this.issueTools = issueTools; this.chatMemory = chatMemory;
+    }
 
     @Override
     public Flux<ChatEvent> chat(String conversationId, String question) {
-        Flux<ChatEvent> tokens = Flux.fromArray(MESSAGE.split(""))
-                .delayElements(Duration.ofMillis(40))
-                .map(ChatEvent.Token::new)
-                .cast(ChatEvent.class);
-
-        return tokens.concatWith(Flux.just(new ChatEvent.Completed("STOP")));
+        if (conversationId == null || conversationId.isBlank() || question == null || question.isBlank()) return Flux.just(new ChatEvent.Completed("STOP"));
+        ChatTurn turn = new ChatTurn();
+        Flux<String> tokens = chatClient.prompt().system(answerGenerator.answerRules()).user(question).tools(issueTools)
+                .toolContext(Map.of(ChatMemory.CONVERSATION_ID, conversationId, ChatTurn.KEY, turn))
+                .advisors(MessageChatMemoryAdvisor.builder(chatMemory).build())
+                .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, conversationId)).stream().content();
+        return turn.stream(tokens);
     }
 }

@@ -8,9 +8,13 @@ import hn.chatbot.service.topic.model.StorySummary;
 import hn.chatbot.service.topic.model.TopicDistribution;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.model.ToolContext;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Map;
+import hn.chatbot.search.SearchResult;
 
 /**
  * 모델이 호출하는 도구 7종. 수강생이 채운다.
@@ -74,8 +78,25 @@ public class IssueTools {
      * 5 ctx 의 conversationId 로 SearchRecord.of 문구를 AssistantMessage 로 기억에 기록한다
      * 6 SearchEvidence 를 돌려준다. 모델이 이것으로 답을 쓴다
      */
-    public SearchEvidence searchIssues(String query, String techField, String category, ToolContext ctx) {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+    @Tool(description = "Search technical stories relevant to a question and return grounded evidence.")
+    public SearchEvidence searchIssues(@ToolParam(description = "User question") String query,
+                                       @ToolParam(description = "Exact tech field or blank") String techField,
+                                       @ToolParam(description = "Exact category or blank") String category,
+                                       ToolContext ctx) {
+        SearchResult result = searchService.search(query, blank(techField), blank(category));
+        List<Long> ids = result.candidates().stream().map(c -> c.storyId()).toList();
+        Map<Long, String> excerpts = chatQuery.bodyExcerpts(ids);
+        List<hn.chatbot.ai.AnalysisTarget> targets = result.candidates().stream()
+                .map(c -> hn.chatbot.ai.AnalysisTarget.forJudge(c.storyId(), c.title(), c.summary(), excerpts.get(c.storyId())))
+                .toList();
+        List<hn.chatbot.ai.RelevantStory> judged = relevanceJudge.selectRelevant(query, targets, 5);
+        SearchEvidence evidence = SearchEvidence.assemble(result, judged,
+                chatQuery.storyDetails(judged.stream().map(x -> x.storyId()).toList()), excerpts);
+        ChatTurn.from(ctx).publish(evidence);
+        String conversationId = String.valueOf(ctx.getContext().get(ChatMemory.CONVERSATION_ID));
+        chatMemory.add(conversationId, new org.springframework.ai.chat.messages.AssistantMessage(
+                SearchRecord.of(query, techField, category, evidence)));
+        return evidence;
     }
 
     /**
@@ -85,8 +106,12 @@ public class IssueTools {
      *
      * 두 인자 모두 선택이다. TopicService.count 에 그대로 넘기면 비운 축은 거르지 않는다.
      */
-    public int countStories(String techField, String category) {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+    @Tool(description = "Count suitable stories, optionally filtered by exact techField and category.")
+    public int countStories(@ToolParam(description = "Exact tech field or blank") String techField,
+                            @ToolParam(description = "Exact category or blank") String category) {
+        validateFilter(techField, "techField");
+        validateFilter(category, "category");
+        return topicService.count(blank(techField), blank(category));
     }
 
     /**
@@ -100,8 +125,23 @@ public class IssueTools {
      *
      * 결과를 SearchRecord.ofStories 문구로 대화 기억에 기록한다.
      */
-    public List<StorySummary> listStories(String techField, String sortBy, Integer limit, ToolContext ctx) {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+    @Tool(description = "List suitable stories ordered by score or recency.")
+    public List<StorySummary> listStories(@ToolParam(description = "Exact tech field or blank") String techField,
+                                          @ToolParam(description = "SCORE or RECENT") String sortBy,
+                                          @ToolParam(description = "Number of stories, 1 to 50") Integer limit,
+                                          ToolContext ctx) {
+        validateFilter(techField, "techField");
+        if (limit != null && (limit < 1 || limit > 50)) throw new IllegalArgumentException("limit must be between 1 and 50");
+        int size = limit == null ? 10 : Math.max(1, Math.min(50, limit));
+        var sort = "RECENT".equalsIgnoreCase(sortBy)
+                ? hn.chatbot.service.topic.port.TopicQuery.StorySort.RECENT
+                : hn.chatbot.service.topic.port.TopicQuery.StorySort.SCORE;
+        hn.chatbot.service.topic.model.TopicStories page = topicService.stories(blank(techField), sort, size);
+        List<StorySummary> stories = page.stories();
+        String id = String.valueOf(ctx.getContext().get(ChatMemory.CONVERSATION_ID));
+        chatMemory.add(id, new org.springframework.ai.chat.messages.AssistantMessage(
+                SearchRecord.ofStories(techField, sort.name(), stories)));
+        return stories;
     }
 
     /**
@@ -109,8 +149,10 @@ public class IssueTools {
      *
      * storyId 를 이미 받아 호출되므로 대화 기억에 따로 남기지 않아도 된다.
      */
-    public StoryDetail getStoryDetail(long storyId) {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+    @Tool(description = "Get the analysis details of one story by story ID.")
+    public StoryDetail getStoryDetail(@ToolParam(description = "Positive story ID") long storyId) {
+        if (storyId <= 0) throw new IllegalArgumentException("storyId must be positive");
+        return chatQuery.storyDetail(storyId).orElse(null);
     }
 
     /**
@@ -118,8 +160,12 @@ public class IssueTools {
      *
      * 돌려주는 text 는 검열을 거쳐 마스킹된 값이다.
      */
-    public List<CommentView> getComments(long storyId, Integer limit) {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+    @Tool(description = "Get comments for one story, with moderation masking applied.")
+    public List<CommentView> getComments(@ToolParam(description = "Positive story ID") long storyId,
+                                         @ToolParam(description = "Number of comments, 1 to 100") Integer limit) {
+        if (storyId <= 0) throw new IllegalArgumentException("storyId must be positive");
+        if (limit != null && (limit < 1 || limit > 100)) throw new IllegalArgumentException("limit must be between 1 and 100");
+        return chatQuery.comments(storyId, limit == null ? 20 : Math.max(1, Math.min(100, limit)));
     }
 
     /**
@@ -127,8 +173,9 @@ public class IssueTools {
      *
      * TopicService 를 그대로 호출한다. 주제 탐색 탭과 모델이 같은 데이터를 본다.
      */
+    @Tool(description = "List available technology fields and categories with story counts.")
     public TopicDistribution listTopics() {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+        return topicService.distribution();
     }
 
     /**
@@ -139,7 +186,16 @@ public class IssueTools {
      *
      * TopicService.summarize 에 위임한다. 그 안에서 TopicSummarizer 가 LLM 을 호출한다.
      */
-    public String summarizeTopic(String techField) {
-        throw new UnsupportedOperationException("아직 구현되지 않았습니다. 이 메서드를 채우세요.");
+    @Tool(description = "Summarize common trends across stories in one technical field.")
+    public String summarizeTopic(@ToolParam(description = "Exact tech field") String techField) {
+        return topicService.summarize(blank(techField));
+    }
+
+    private static String blank(String value) {
+        return value == null || value.isBlank() ? null : value.strip();
+    }
+
+    private static void validateFilter(String value, String name) {
+        if (value != null && value.length() > 80) throw new IllegalArgumentException(name + " is too long");
     }
 }
